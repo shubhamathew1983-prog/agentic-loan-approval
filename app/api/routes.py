@@ -7,13 +7,13 @@ from app.models import (
     ApplicationStatus,
 )
 from app.utils import get_storage, get_logger
-from app.orchestration import LoanApplicationOrchestrator
+from app.orchestration import LangGraphOrchestrator
 import asyncio
 
 router = APIRouter(prefix="/api", tags=["applications"])
 logger = get_logger(__name__)
 storage = get_storage()
-orchestrator = LoanApplicationOrchestrator()
+orchestrator = LangGraphOrchestrator()
 
 
 @router.post("/applications", response_model=LoanApplicationResponse)
@@ -55,15 +55,25 @@ async def submit_application(request: LoanApplicationRequest, background_tasks: 
             "location": request.location,
         }
 
-        background_tasks.add_task(
-            asyncio.run,
-            orchestrator.process_application(
-                app_id,
-                applicant_data,
-                financial_data,
-                loan_details,
-            ),
-        )
+        async def run_orchestration():
+            """Run LangGraph orchestration asynchronously."""
+            try:
+                await orchestrator.invoke({
+                    "application_id": app_id,
+                    "applicant_data": applicant_data,
+                    "financial_data": financial_data,
+                    "loan_details": loan_details,
+                })
+            except Exception as e:
+                logger.error(f"Orchestration failed for {app_id}: {str(e)}")
+                storage.log_action({
+                    "application_id": app_id,
+                    "action": "Orchestration error",
+                    "details": {"error": str(e)},
+                    "status": "error",
+                })
+
+        background_tasks.add_task(asyncio.run, run_orchestration())
 
         return LoanApplicationResponse(
             application_id=app_id,
