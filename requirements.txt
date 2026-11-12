@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+python-dotenv
+streamlit
+langgraph
+langchain
+langchain-anthropic
+anthropic
+fastmcp
+pytest
+pytest-asyncio
+websockets
+python-multipart
+aiofiles
