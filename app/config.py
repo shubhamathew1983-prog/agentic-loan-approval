@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     log_file: str = "logs/app.log"
 
     # LLM
-    llm_model: str = "claude-haiku-4-5-20251001-v1:0"
+    llm_model: str = "claude-haiku-5-5"
     llm_temperature: float = 0.7
     llm_max_tokens: int = 1024
 

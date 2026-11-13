@@ -1,4 +1,5 @@
 from app.agents.base_agent import BaseAgent, AgentInput, AgentOutput
+from app.mcp_servers.mcp_client import get_mcp_client
 from datetime import datetime
 from typing import Dict, Any
 import uuid
@@ -15,7 +16,6 @@ class ComplianceActionOrchestratorAgent(BaseAgent):
 
         applicant = agent_input.applicant_data
 
-        # Compliance Checks
         compliance_flags = []
         protected_attributes_found = []
 
@@ -24,7 +24,7 @@ class ComplianceActionOrchestratorAgent(BaseAgent):
         if age < 18:
             compliance_flags.append("Applicant under 18")
 
-        # Identify protected attributes (for Fair Lending tracking)
+        # Identify protected attributes for Fair Lending tracking
         if "age" in applicant:
             protected_attributes_found.append("age")
         if "gender" in applicant:
@@ -54,7 +54,7 @@ class ComplianceActionOrchestratorAgent(BaseAgent):
         if not first_name or not last_name:
             compliance_flags.append("Missing name information")
 
-        # Generate Case ID for manual reviews
+        # Single case ID used throughout the lifecycle
         case_id = f"CASE-{str(uuid.uuid4())[:8].upper()}"
 
         recommendation = "PROCEED"
@@ -71,7 +71,9 @@ class ComplianceActionOrchestratorAgent(BaseAgent):
                 "case_id": case_id,
                 "pii_validation": {
                     "email_valid": bool(email and "@" in email),
-                    "phone_valid": bool(phone and len(phone.replace("-", "").replace("+", "").replace(" ", "")) >= 10),
+                    "phone_valid": bool(
+                        phone and len(phone.replace("-", "").replace("+", "").replace(" ", "")) >= 10
+                    ),
                     "address_complete": bool(all([address, city, state, zip_code])),
                     "name_valid": bool(first_name and last_name),
                 },
@@ -92,41 +94,71 @@ class ComplianceActionOrchestratorAgent(BaseAgent):
         decision: Dict[str, Any],
         applicant_data: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Execute compliance actions and trigger notifications."""
+        """Execute compliance actions and trigger notifications via MCP."""
 
         actions_taken = []
-
-        # Generate case ID if not present
         case_id = f"CASE-{str(uuid.uuid4())[:8].upper()}"
-
-        # Determine notification type based on decision
         decision_class = decision.get("classification", "UNKNOWN")
 
         if decision_class == "APPROVED":
             action_type = "APPROVAL_NOTIFICATION"
             notification_template = "approval"
-            actions_taken.append(f"Generate approval letter - {case_id}")
-            actions_taken.append("Send approval email notification")
-            actions_taken.append("Create loan document checklist")
-            actions_taken.append("Schedule disbursement")
-
+            actions_taken.extend([
+                f"Generate approval letter - {case_id}",
+                "Send approval email notification",
+                "Create loan document checklist",
+                "Schedule disbursement",
+            ])
         elif decision_class == "REJECTED":
             action_type = "REJECTION_NOTIFICATION"
             notification_template = "rejection"
-            actions_taken.append(f"Generate denial letter - {case_id}")
-            actions_taken.append("Send rejection email notification")
-            actions_taken.append("Log rejection reason for audit")
-            actions_taken.append("Document compliance checks performed")
-
-        else:  # REQUIRES_REVIEW
+            actions_taken.extend([
+                f"Generate denial letter - {case_id}",
+                "Send rejection email notification",
+                "Log rejection reason for audit",
+                "Document compliance checks performed",
+            ])
+        else:
             action_type = "MANUAL_REVIEW_ASSIGNMENT"
             notification_template = "manual_review"
-            actions_taken.append(f"Create manual review case - {case_id}")
-            actions_taken.append("Assign to loan officer review queue")
-            actions_taken.append("Send case assignment notification")
-            actions_taken.append("Set escalation priority based on risk")
+            actions_taken.extend([
+                f"Create manual review case - {case_id}",
+                "Assign to loan officer review queue",
+                "Send case assignment notification",
+                "Set escalation priority based on risk",
+            ])
 
-        # Log compliance action
+        # ── Notify via NotificationSystem MCP ────────────────────────────────
+        mcp = get_mcp_client()
+        notify_result = await mcp.notify_decision({
+            "application_id": application_id,
+            "decision": decision_class,
+            "applicant_email": applicant_data.get("email"),
+        })
+        if notify_result:
+            self.logger.info(
+                f"[MCP] Decision notification sent via NotificationSystem MCP: "
+                f"status={notify_result.get('status')}"
+            )
+            actions_taken.append(f"MCP notification dispatched: {notify_result.get('status')}")
+        else:
+            self.logger.warning("[MCP] NotificationSystem MCP unreachable — notification logged locally")
+
+        # ── Log to compliance audit trail via NotificationSystem MCP ─────────
+        compliance_result = await mcp.log_compliance({
+            "application_id": application_id,
+            "classification": decision_class,
+            "reasoning": decision.get("explanation", ""),
+            "agent_outputs": decision.get("agent_outputs", []),
+        })
+        if compliance_result:
+            self.logger.info(
+                f"[MCP] Compliance logged via NotificationSystem MCP: "
+                f"case={compliance_result.get('case_id')}"
+            )
+        else:
+            self.logger.warning("[MCP] NotificationSystem MCP unreachable — compliance logged locally")
+
         self._log_action(
             application_id,
             "Compliance actions executed",
@@ -135,8 +167,8 @@ class ComplianceActionOrchestratorAgent(BaseAgent):
                 "decision_type": decision_class,
                 "actions": actions_taken,
                 "notification_template": notification_template,
-                "risk_score": decision.get("risk_score"),
-                "confidence": decision.get("confidence_level"),
+                "mcp_notify": notify_result is not None,
+                "mcp_compliance": compliance_result is not None,
             },
         )
 
@@ -150,5 +182,7 @@ class ComplianceActionOrchestratorAgent(BaseAgent):
             "action_type": action_type,
             "actions_taken": actions_taken,
             "notification_template": notification_template,
+            "mcp_notification": notify_result,
+            "mcp_compliance_log": compliance_result,
             "executed_at": datetime.now().isoformat(),
         }

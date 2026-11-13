@@ -33,6 +33,8 @@ async def submit_application(request: LoanApplicationRequest, background_tasks: 
         }
 
         app_id = storage.create_application(app_data)
+        # Store applicant profile separately so MCP ApplicantDB can look it up by ID
+        storage.create_applicant(request.applicant_profile.dict())
         storage.log_action({
             "application_id": app_id,
             "action": "Application submitted",
@@ -73,7 +75,7 @@ async def submit_application(request: LoanApplicationRequest, background_tasks: 
                     "status": "error",
                 })
 
-        background_tasks.add_task(asyncio.run, run_orchestration())
+        background_tasks.add_task(run_orchestration)
 
         return LoanApplicationResponse(
             application_id=app_id,
@@ -103,7 +105,7 @@ async def get_application(application_id: str) -> LoanApplicationResponse:
         decision = storage.get_decision_by_application(application_id)
 
         return LoanApplicationResponse(
-            application_id=app_id,
+            application_id=application_id,
             status=app.get("status", ApplicationStatus.SUBMITTED),
             submitted_at=app.get("application_timestamp", datetime.now()),
             decision=decision.get("classification") if decision else None,

@@ -50,10 +50,10 @@ class BaseAgent(ABC):
         })
 
     def _calculate_confidence(self, factors: Dict[str, float]) -> float:
-        """Calculate confidence score based on factors (0-100)."""
+        """Calculate confidence score based on factors already on a 0-100 scale."""
         if not factors:
             return 0.0
-        return sum(factors.values()) / len(factors) * 100
+        return sum(factors.values()) / len(factors)
 
     async def execute(self, agent_input: AgentInput) -> AgentOutput:
         """Execute agent analysis with logging."""
